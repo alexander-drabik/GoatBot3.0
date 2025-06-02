@@ -5,7 +5,10 @@
   env.GREET = "devenv";
 
   # https://devenv.sh/packages/
-  packages = [ pkgs.git ];
+  packages = [ 
+		pkgs.git
+		pkgs.sqlite
+  ];
 
   languages.rust.enable = true;
 
