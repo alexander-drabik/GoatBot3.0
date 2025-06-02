@@ -1,14 +1,14 @@
 use std::sync::Arc;
 
-use ::serenity::{
-    all::{CreateAllowedMentions, EventHandler, Mentionable, Message},
-    async_trait,
-};
+use ::serenity::all::{CreateAllowedMentions, Mentionable};
+use chrono::Utc;
 use poise::{CreateReply, Prefix, PrefixFrameworkOptions, serenity_prelude as serenity};
 use sqlx::sqlite::SqlitePool;
+use stats::Stats;
 use tokio::fs;
 use user::ServerUser;
 
+mod stats;
 mod user;
 
 struct Data {
@@ -67,10 +67,14 @@ async fn event_handler(
             println!("Logged in as {}", data_about_bot.user.name);
         }
         serenity::FullEvent::Message { new_message } => {
-            println!("{}", new_message.content);
-            ServerUser::increment_message_count(&data.pool, new_message.author.id.get() as i64)
-                .await
-                .expect("Error incrementing message count!");
+            if !new_message.author.bot {
+                ServerUser::increment_message_count(&data.pool, new_message.author.id.get() as i64)
+                    .await
+                    .expect("Error incrementing message count!");
+                Stats::increment_message_count(&data.pool, Utc::now().date_naive())
+                    .await
+                    .expect("Error incrementing message count in stats");
+            }
         }
         _ => {}
     }
@@ -100,7 +104,19 @@ async fn main() {
     )
     .execute(&*pool)
     .await
-    .expect("Create table query error");
+    .expect("Create table users query error");
+
+    sqlx::query(
+        r#"
+        CREATE TABLE IF NOT EXISTS stats (
+            date DATE PRIMARY KEY,
+            message_count INTEGER
+        )
+        "#,
+    )
+    .execute(&*pool)
+    .await
+    .expect("Create table stats query error");
 
     let token = fs::read_to_string(".token")
         .await
