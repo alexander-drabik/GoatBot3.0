@@ -24,22 +24,29 @@ impl ServerUser {
         .unwrap_or(None)
     }
 
-    pub async fn update_user_messages(pool: &sqlx::SqlitePool, user_id: i64, message_count: i64) {
+    pub async fn update_db(self, pool: &sqlx::SqlitePool) {
         sqlx::query(
             r#"
         UPDATE users
         SET
             message_count = ?,
+            mutes_left = ?,
+            mutes_used = ?,
+            streak = ?,
+            last_activity = ?
         WHERE id = ?
         "#,
         )
-        .bind(message_count)
-        .bind(user_id)
+        .bind(self.message_count)
+        .bind(self.mutes_left)
+        .bind(self.mutes_used)
+        .bind(self.streak)
+        .bind(self.last_activity.to_string())
+        .bind(self.id)
         .execute(pool)
         .await
         .unwrap();
     }
-
     pub async fn increment_message_count(
         pool: &sqlx::SqlitePool,
         user_id: i64,
@@ -47,7 +54,7 @@ impl ServerUser {
         sqlx::query(
             r#"
         INSERT INTO users (id, message_count, mutes_left, mutes_used, streak, last_activity)
-        VALUES (?, 1, 0, 0, 1, ?)
+        VALUES (?, 1, 0, 0, 0, ?)
         ON CONFLICT(id) DO UPDATE SET message_count = message_count + 1
         "#,
         )

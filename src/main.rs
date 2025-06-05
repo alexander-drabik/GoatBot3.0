@@ -1,7 +1,7 @@
 use std::sync::Arc;
 
 use ::serenity::all::{CreateAllowedMentions, Mentionable};
-use chrono::Utc;
+use chrono::{Duration, Utc};
 use poise::{CreateReply, Prefix, PrefixFrameworkOptions, serenity_prelude as serenity};
 use sqlx::sqlite::SqlitePool;
 use stats::Stats;
@@ -28,19 +28,23 @@ async fn info(
             ServerUser::get_user_from_id(&ctx.data().pool, dc_user.id.get() as i64).await;
         let response = if let Some(server_user) = server_user {
             format!(
-                r#"
-                **Użytkownik**: {}
-    - **Liczba Wiadomości**: {}
-    - **Pozostałe Wyciszenia**: {}
-    - **Wyciszeni Użytkownicy**: {}
-    - **Ostatnia Aktywność**: {}
-    - **Passa**: {}"#,
+                "**Użytkownik**: {} \n\
+                - **Liczba Wiadomości**: {} \n\
+                - **Pozostałe Wyciszenia**: {}\n\
+                - **Wyciszeni Użytkownicy**: {}\n\
+                - **Ostatnia Aktywność**: {}\n\
+                - **Passa**: {} {}",
                 dc_user.mention(),
                 server_user.message_count,
                 server_user.mutes_left,
                 server_user.mutes_used,
                 server_user.last_activity,
-                server_user.streak
+                server_user.streak,
+                if server_user.streak == 1 {
+                    "dzień"
+                } else {
+                    "dni"
+                }
             )
         } else {
             String::from("Nie znaleziono użytkownika!")
@@ -67,13 +71,40 @@ async fn event_handler(
             println!("Logged in as {}", data_about_bot.user.name);
         }
         serenity::FullEvent::Message { new_message } => {
-            if !new_message.author.bot {
-                ServerUser::increment_message_count(&data.pool, new_message.author.id.get() as i64)
-                    .await
-                    .expect("Error incrementing message count!");
-                Stats::increment_message_count(&data.pool, Utc::now().date_naive())
-                    .await
-                    .expect("Error incrementing message count in stats");
+            if new_message.author.bot {
+                return Ok(());
+            }
+
+            let author_id = new_message.author.id.get() as i64;
+            ServerUser::increment_message_count(&data.pool, author_id)
+                .await
+                .expect("Error incrementing message count!");
+            Stats::increment_message_count(&data.pool, Utc::now().date_naive())
+                .await
+                .expect("Error incrementing message count in stats!");
+
+            if let Some(mut s_user) = ServerUser::get_user_from_id(&data.pool, author_id).await {
+                let current_date = Utc::now().date_naive();
+                let mut need_to_update = false;
+
+                let duration = current_date.signed_duration_since(s_user.last_activity);
+                if duration == Duration::days(1) {
+                    s_user.streak += 1;
+                    need_to_update = true;
+                } else if s_user.last_activity != current_date {
+                    s_user.last_activity = current_date;
+                    s_user.streak = 0;
+                    need_to_update = true;
+                }
+
+                if s_user.message_count % 100 == 0 {
+                    s_user.mutes_left += 1;
+                    need_to_update = true;
+                }
+
+                if need_to_update {
+                    s_user.update_db(&data.pool).await;
+                }
             }
         }
         _ => {}
